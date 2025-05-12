@@ -1,0 +1,111 @@
+#!/bin/sh
+#
+# MagicPCL converts PCL to PDF, applies background overlays, sends to printer or spools.
+# (c) 2008 Diego Javier Coppari – LGLP License
+#
+
+show_help() {
+  cat << EOF
+Usage: $(basename "$0") [OPTION] [OUTPUT] [BACKGROUND] [PRINTER]
+
+Options:
+  -P printer    Read from STDIN and send output to printer using lpr
+  -F file       Save output to specified file (with optional background)
+  -S file       Send output to MagicSpooler (default behavior)
+  -B file       Same as -S but allows background overlay
+  -D file       Same as -B but sends final PDF to printer using rlpr
+
+Arguments:
+  OUTPUT         Path to output PDF file (default: /tmp/\$USER/output.pdf)
+  BACKGROUND     Optional PDF file to use as background
+  PRINTER        Printer name (for -P or -D)
+
+This script is part of the MagicSpool solution by Diego J. Coppari.
+Licensed under the terms of the LGPL.
+(c) 2008-2024 Diego Javier Coppari
+
+Contact:
+   https://github.com/dcoppari
+
+EOF
+}
+
+# Show help if needed
+[ $# -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-H" ] && {
+  show_help
+  exit 0
+}
+
+# Check required commands
+REQUIRED_CMDS="pcl6 unix2dos rlpr lpr"
+for cmd in $REQUIRED_CMDS; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "Error: required command '$cmd' not found in PATH."
+    exit 1
+  }
+done
+
+# Optional commands used depending on case
+[ "$3" ] && [ -f "$3" ] && command -v pdftk >/dev/null 2>&1 || true
+[ "$1" = "-S" ] || [ "$1" = "-B" ] && command -v magicspool >/dev/null 2>&1 || true
+
+# Clear Progress CLASSPATH
+export CLASSPATH=""
+
+# Create temporary directory for the user
+USER_TMP_DIR="/tmp/$USER"
+mkdir -p "$USER_TMP_DIR"
+echo "$@" > "$USER_TMP_DIR/lm.log"
+
+OPTION="${1:--S}"
+OUTPUT="${2:-$USER_TMP_DIR/output.pdf}"
+BACKGROUND_FILE="${3:-}"
+PRINTER="${4:-}"
+
+PCL6LOG="$USER_TMP_DIR/pcl6err.log"
+PCL6PARAM="-dNOPAUSE -dQUIET -dBATCH -dEPSFitPage -sstdout=\"$PCL6LOG\" -sDEVICE=pdfwrite"
+
+apply_background() {
+  local input_file=$1
+  local background=$2
+  local output_file=$3
+  local printer=$4
+
+  if [ -n "$printer" ] && [ "$printer" = "cut" ]; then
+    pdftk "$input_file" cat 1 output "${output_file}.tkt"
+    mv "${output_file}.tkt" "$input_file"
+  fi
+
+  if [ -n "$background" ] && [ -f "$background" ]; then
+    pdftk "$input_file" background "$background" output "$output_file"
+    rm -f "$input_file"
+  else
+    mv "$input_file" "$output_file"
+  fi
+
+  chmod 664 "$output_file" 2>/dev/null
+}
+
+case "$OPTION" in
+  -P)
+    unix2dos -f | pcl6 $PCL6PARAM -sOutputFile=- - | lpr -P "$OUTPUT"
+    ;;
+  -S|-B|-D|-F)
+    unix2dos -f | pcl6 $PCL6PARAM -sOutputFile="${OUTPUT}.tk" -
+    apply_background "${OUTPUT}.tk" "$BACKGROUND_FILE" "$OUTPUT" "$PRINTER"
+
+    if [ "$OPTION" = "-D" ]; then
+      rlpr -P "$PRINTER" "$OUTPUT"
+    elif [ "$OPTION" = "-F" ]; then
+      : # No action needed
+    else
+      magicspool "$OUTPUT"
+    fi
+    ;;
+  *)
+    echo "Bad Arguments. Use --help for usage information."
+    exit 1
+    ;;
+esac
+
+exit 0

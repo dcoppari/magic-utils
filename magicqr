@@ -1,0 +1,98 @@
+#!/bin/bash
+#
+# MagicQR generates a QR code and outputs a PCL-ready file
+# (c) 2008 Diego Javier Coppari – LGLP License
+#
+
+set -euo pipefail
+
+# Help message
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") <qr_text> <output_file>
+
+Generates a QR code and converts it into a PCL file ready for printing.
+
+Arguments:
+  qr_text       The text or URL to encode into the QR code.
+  output_file   The resulting .pcl file ready for use.
+
+Example:
+  $(basename "$0") "https://example.com/invoice/1234" qr-code.pcl
+
+This script is part of the MagicSpool solution by Diego J. Coppari.
+Licensed under the terms of the LGPL.
+(c) 2008-2024 Diego Javier Coppari
+
+Contact:
+   https://github.com/dcoppari
+
+EOF
+}
+
+# Validate required commands
+require_commands() {
+  for cmd in "$@"; do
+    command -v "$cmd" >/dev/null 2>&1 || {
+      echo "Error: Required command '$cmd' not found in PATH." >&2
+      exit 1
+    }
+  done
+}
+
+# Check exit status of critical steps
+assert_success() {
+  local message="$1"
+  if [ $? -ne 0 ]; then
+    echo "Error: $message" >&2
+    exit 1
+  fi
+}
+
+# Validate arguments
+if [ "$#" -ne 2 ] || [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  show_help
+  [ "$#" -ne 2 ] && exit 1 || exit 0
+fi
+
+# Ensure cleanup on exit
+cleanup() {
+  rm -f "$TMP_PREFIX" "$QR_IMAGE" "$RAW_PCL"
+}
+trap cleanup EXIT
+
+require_commands qrencode convert dd truncate mktemp
+
+# Inputs
+QR_TEXT="$1"
+OUTPUT_FILE="$2"
+
+# Temporary files
+TMP_PREFIX="$(mktemp)"
+QR_IMAGE="${TMP_PREFIX}.png"
+RAW_PCL="${TMP_PREFIX}.pcl"
+
+# Step 1: Generate QR code as PNG
+qrencode -m0 -s2 -lL -o "$QR_IMAGE" "$QR_TEXT"
+assert_success "Failed to generate QR code image."
+
+# Step 2: Convert PNG to PCL (monochrome)
+convert -monochrome "$QR_IMAGE" "$RAW_PCL"
+assert_success "Failed to convert image to PCL."
+
+[ -s "$RAW_PCL" ] || {
+  echo "Error: Generated PCL file is empty or missing." >&2
+  exit 1
+}
+
+# Step 3: Adjust PCL file - remove first 7 bytes, then last byte
+dd if="$RAW_PCL" of="$OUTPUT_FILE" bs=1 skip=7 status=none
+assert_success "Failed to trim first 7 bytes from PCL file."
+
+truncate -s -1 "$OUTPUT_FILE"
+assert_success "Failed to remove last byte from PCL file."
+
+[ -s "$OUTPUT_FILE" ] || {
+  echo "Error: Final PCL file is empty or invalid." >&2
+  exit 1
+}
