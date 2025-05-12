@@ -7,8 +7,8 @@ Included tools:
 - `magicpcl`: converts PCL to PDF, applies background overlays, sends to printer or spools.
 - `magicqr`: generates a QR code and outputs a PCL-ready file.
 - `magicspool`: sends a Base64-encoded PDF over TCP to a remote spool server.
-- `pcl6`: bundled GhostPCL binary to convert PCL to PDF.
-- Internal `.ttf` font files for standalone usage.
+- `pcl6`: bundled binary to convert PCL to PDF.
+- `fonts` font files for standalone usage (required by pcl6).
 
 ---
 
