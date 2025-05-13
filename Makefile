@@ -1,6 +1,10 @@
 PACKAGE_NAME=magic-utils
-VERSION?=$(shell echo $$VERSION)
-VERSION:=$(if $(VERSION),$(VERSION),0)
+VERSION_RAW ?= $(shell echo $$VERSION)
+VERSION := $(shell echo $(VERSION_RAW) | sed 's/^v//')
+ifeq ($(VERSION),)
+  VERSION := 0.0.0
+endif
+RELEASE_NAME := Magic Utils $(VERSION)
 ARCH=amd64
 BUILD_DIR=$(PACKAGE_NAME)
 BIN_DIR=$(BUILD_DIR)/usr/local/bin
@@ -38,7 +42,7 @@ control:
 
 copy-scripts:
 	@for f in $(SCRIPTS); do \
-	  cp $$f $(BIN_DIR)/ ; \
+		cp $$f $(BIN_DIR)/ ; \
 	done
 	cp $(BINARIES) $(BIN_DIR)/pcl6
 
@@ -52,6 +56,7 @@ permissions:
 package:
 	dpkg-deb --build $(BUILD_DIR) .
 	@echo "✅ Package built: $(DEB_FILE)"
+	@echo "📦 Release name: $(RELEASE_NAME)"
 
 clean:
 	rm -rf $(BUILD_DIR) $(DEB_FILE)
