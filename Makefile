@@ -18,7 +18,7 @@ BINARIES=pcl6
 
 all: clean build
 
-build: setup control copy-scripts copy-fonts permissions package
+build: clean setup control copy-scripts copy-fonts permissions ownership package
 
 setup:
 	mkdir -p $(BIN_DIR)
@@ -42,7 +42,7 @@ control:
 
 copy-scripts:
 	@for f in $(SCRIPTS); do \
-		cp $$f $(BIN_DIR)/ ; \
+	  cp $$f $(BIN_DIR)/ ; \
 	done
 	cp $(BINARIES) $(BIN_DIR)/pcl6
 
@@ -52,6 +52,9 @@ copy-fonts:
 permissions:
 	chmod 755 $(BIN_DIR)/*
 	chmod 644 $(FONT_DIR)/*.ttf
+
+ownership:
+	@chown -R root:root $(BUILD_DIR)
 
 package:
 	dpkg-deb --build $(BUILD_DIR) .
