@@ -1,6 +1,6 @@
 PACKAGE_NAME=magic-utils
-VERSION ?= $(shell echo $$VERSION)
-VERSION := $(if $(VERSION),$(VERSION),dev)
+VERSION?=$(shell echo $$VERSION)
+VERSION:=$(if $(VERSION),$(VERSION),0)
 ARCH=amd64
 BUILD_DIR=$(PACKAGE_NAME)
 BIN_DIR=$(BUILD_DIR)/usr/local/bin
@@ -23,19 +23,18 @@ setup:
 
 control:
 	@echo "Creating control file..."
-	@cat > $(DEBIAN_DIR)/control <<EOF
-Package: $(PACKAGE_NAME)
-Version: $(VERSION)
-Section: utils
-Priority: optional
-Architecture: $(ARCH)
-Maintainer: Diego J. Coppari <diego2k[_at_]gmail.com>
-Depends: bash, perl, dos2unix, rlpr, lpr, pdftk, qrencode, imagemagick
-Description: MagicSpool Utilities (magicpcl, magicqr, magicspool)
- Suite of tools to process PCL input streams, generate QR codes as PCL,
- apply background to PDFs and handle remote spool via magicspooler.
- Includes bundled pcl6 binary and required TTF fonts in /windows/fonts.
-EOF
+	@mkdir -p $(DEBIAN_DIR)
+	@printf "Package: %s\n" "$(PACKAGE_NAME)" > $(DEBIAN_DIR)/control
+	@printf "Version: %s\n" "$(VERSION)" >> $(DEBIAN_DIR)/control
+	@printf "Section: utils\n" >> $(DEBIAN_DIR)/control
+	@printf "Priority: optional\n" >> $(DEBIAN_DIR)/control
+	@printf "Architecture: %s\n" "$(ARCH)" >> $(DEBIAN_DIR)/control
+	@printf "Maintainer: Diego J. Coppari <diego2k[_at_]gmail.com>\n" >> $(DEBIAN_DIR)/control
+	@printf "Depends: bash, perl, dos2unix, rlpr, lpr, pdftk, qrencode, imagemagick\n" >> $(DEBIAN_DIR)/control
+	@printf "Description: MagicSpool Utilities (magicpcl, magicqr, magicspool)\n" >> $(DEBIAN_DIR)/control
+	@printf " Suite of tools to process PCL input streams, generate QR codes as PCL,\n" >> $(DEBIAN_DIR)/control
+	@printf " apply background to PDFs and handle remote spool via magicspooler.\n" >> $(DEBIAN_DIR)/control
+	@printf " Includes bundled pcl6 binary and required TTF fonts in /windows/fonts.\n" >> $(DEBIAN_DIR)/control
 
 copy-scripts:
 	@for f in $(SCRIPTS); do \
