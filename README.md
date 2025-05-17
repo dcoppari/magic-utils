@@ -1,5 +1,7 @@
 # Magic Utils
 
+[![Build and Release .deb](https://github.com/dcoppari/magic-utils/actions/workflows/build.yml/badge.svg)](https://github.com/dcoppari/magic-utils/actions/workflows/build.yml)
+
 **Magic Utils** is a lightweight set of tools for converting PCL to PDF, generating printable QR codes, and remotely spooling documents. It's built for legacy environments, and automated printing workflows.
 
 Included tools:
