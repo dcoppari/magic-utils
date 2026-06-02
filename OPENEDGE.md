@@ -327,3 +327,143 @@ RUN magicspool.p (
 - **`SESSION_ID` vacío**: si la variable de entorno no está seteada, el servidor rechaza el mensaje con `ERROR: Missing required attribute`.
 
 - **Debug**: cada llamada sobreescribe `/tmp/[SESSION_ID]_last_message.xml` con el XML enviado — útil para diagnosticar sin necesidad de sniffear el socket.
+
+---
+
+## Impresión directa de PCL desde OpenEdge
+
+Los scripts `magicqr` y `magicgraph` generan archivos `.pcl` listos para enviar a impresora. El
+siguiente procedimiento genérico los invoca, lee el binario resultante en memoria y lo envía al
+contexto de impresión activo (`OUTPUT TO PRINTER`).
+
+### Procedimiento auxiliar `magic-utils`
+
+```openedge
+PROCEDURE magic-utils:
+    DEF INPUT PARAMETER wutil AS CHAR NO-UNDO.  /* nombre del script: magicqr | magicgraph */
+    DEF INPUT PARAMETER warg  AS CHAR NO-UNDO.  /* argumentos del script                  */
+    DEF INPUT PARAMETER wx    AS INT  NO-UNDO.  /* posición X en puntos PCL (1/720 pulg.)  */
+    DEF INPUT PARAMETER wy    AS INT  NO-UNDO.  /* posición Y en puntos PCL (1/720 pulg.)  */
+
+    DEF VAR mMyMemPtr AS MEMPTR NO-UNDO.
+    DEF VAR wfilename AS CHAR   NO-UNDO.
+    DEF VAR wCmd      AS CHAR   NO-UNDO.
+
+    wfilename = '/tmp/' + USERID("USERINFO") + '/output.pcl'.
+    wCmd = SUBSTITUTE('&1 &2 "&3"', wutil, warg, wfilename).
+
+    UNIX SILENT VALUE(wCmd).
+
+    IF SEARCH(wfilename) = ? THEN RETURN.
+
+    FILE-INFO:FILE-NAME = wfilename.
+    SET-SIZE(mMyMemPtr) = FILE-INFO:FILE-SIZE.
+
+    INPUT FROM VALUE(FILE-INFO:FILE-NAME) BINARY NO-MAP NO-CONVERT.
+    IMPORT mMyMemPtr.
+    INPUT CLOSE.
+
+    /* Posicionar cursor antes de volcar el PCL */
+    PUT CONTROL CHR(27) + '*r0F'.
+    PUT CONTROL CHR(27) + '*p' + STRING(wx) + 'x' + STRING(wy) + 'Y'.
+
+    EXPORT mMyMemPtr.
+
+    SET-SIZE(mMyMemPtr) = 0.
+    UNIX SILENT VALUE('rm -f ' + wfilename).
+END PROCEDURE.
+```
+
+### Coordenadas PCL
+
+| Secuencia                          | Significado                                              |
+|------------------------------------|----------------------------------------------------------|
+| `ESC *r0F`                         | Finaliza cualquier bloque de gráficos raster abierto     |
+| `ESC *p<x>x<y>Y`                   | Mueve el cursor a la posición absoluta (X, Y)            |
+| 1 punto PCL = 1/720 de pulgada     | A 300 dpi: 1 punto PCL ≈ 2,4 px                         |
+
+Conversión rápida: `puntos_pcl = pulgadas × 720 = mm × 720 / 25.4`
+
+---
+
+### Ejemplo: imprimir un código QR
+
+```openedge
+OUTPUT TO PRINTER.
+
+RUN magic-utils(
+    'magicqr',
+    '"https://ejemplo.com/factura/1234"',
+    100,   /* X: ~3,5 mm desde el margen izquierdo */
+    200    /* Y: ~7 mm desde la parte superior      */
+).
+
+OUTPUT CLOSE.
+```
+
+---
+
+### Ejemplo: imprimir un gráfico de torta
+
+```openedge
+OUTPUT TO PRINTER.
+
+RUN magic-utils(
+    'magicgraph',
+    'pie "Ventas:40,Costos:30,Otros:30" 600 600',
+    500,
+    1000
+).
+
+OUTPUT CLOSE.
+```
+
+---
+
+### Ejemplo: imprimir un gráfico de barras desde CSV
+
+```openedge
+DEF VAR wArgs AS CHAR NO-UNDO.
+wArgs = 'bar /tmp/ventas.csv 1000 600'.
+
+OUTPUT TO PRINTER.
+RUN magic-utils('magicgraph', wArgs, 500, 2000).
+OUTPUT CLOSE.
+```
+
+---
+
+### Ejemplo: QR y gráfico en la misma página
+
+```openedge
+OUTPUT TO PRINTER.
+
+/* QR en esquina superior derecha */
+RUN magic-utils(
+    'magicqr',
+    '"https://ejemplo.com/doc/9999"',
+    4500, 200
+).
+
+/* Gráfico de barras debajo */
+RUN magic-utils(
+    'magicgraph',
+    'bar "Ene:120,Feb:95,Mar:140" 2000 1200',
+    500, 1500
+).
+
+OUTPUT CLOSE.
+```
+
+---
+
+### Consideraciones
+
+- El directorio `/tmp/<usuario>/` debe existir antes de llamar al procedimiento. Se puede crear con
+  `UNIX SILENT VALUE('mkdir -p /tmp/' + USERID("USERINFO"))`.
+- `warg` se pasa como un único string; los valores con espacios deben ir entre comillas dobles
+  dentro del string (ver ejemplos de `magicgraph`).
+- Si el script no está en el `PATH` del proceso OpenEdge, usar la ruta absoluta:
+  `/usr/local/bin/magicqr` en lugar de `magicqr`.
+- El procedimiento hace `RETURN` silenciosamente si el archivo PCL no se generó (error en el
+  script externo). Verificar con `UNIX VALUE(wCmd)` sin `SILENT` para capturar el código de salida.

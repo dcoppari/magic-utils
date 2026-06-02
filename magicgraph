@@ -1,0 +1,257 @@
+#!/bin/bash
+#
+# MagicGraph generates a chart (pie/bar/line) and outputs a PCL-ready file
+# (c) 2008-2026 Diego Javier Coppari – LGPL License
+#
+
+set -euo pipefail
+
+# Help message
+show_help() {
+  cat <<EOF
+Usage: $(basename "$0") <type> <data> <output_file> [width] [height]
+
+Generates a chart and converts it into a PCL file ready for printing.
+Output is monochrome (distinct fills/hatching) so it stays legible on
+black-and-white printers.
+
+Arguments:
+  type          Chart type: pie | bar | line
+  data          Either inline "label:value" pairs separated by commas
+                (e.g. "Ventas:40,Costos:30,Otros:30"), or a path to a
+                two-column CSV "label,value" (header auto-detected).
+  output_file   The resulting .pcl file ready for use.
+  width         Final PNG width in pixels  (optional, default 600).
+  height        Final PNG height in pixels (optional, default 600).
+
+Examples:
+  $(basename "$0") pie  "Ventas:40,Costos:30,Otros:30" torta.pcl 800 800
+  $(basename "$0") bar  ventas.csv                      barras.pcl 1000 600
+  $(basename "$0") line consumo.csv                     linea.pcl
+
+This script is part of the MagicSpool solution by Diego J. Coppari.
+Licensed under the terms of the LGPL.
+(c) 2008-2026 Diego Javier Coppari
+
+Contact:
+   https://github.com/dcoppari
+
+EOF
+}
+
+# Validate required commands
+require_commands() {
+  for cmd in "$@"; do
+    command -v "$cmd" >/dev/null 2>&1 || {
+      echo "Error: Required command '$cmd' not found in PATH." >&2
+      exit 1
+    }
+  done
+}
+
+# Check exit status of critical steps
+# Must be called immediately after the command to check.
+assert_success() {
+  local exit_code=$?
+  local message="$1"
+  if [ "$exit_code" -ne 0 ]; then
+    echo "Error: $message" >&2
+    exit 1
+  fi
+}
+
+# Detect ImageMagick convert command (v6: 'convert', v7: 'magick')
+detect_convert() {
+  if command -v magick >/dev/null 2>&1; then
+    echo "magick"
+  elif command -v convert >/dev/null 2>&1; then
+    echo "convert"
+  else
+    echo "Error: Required command 'magick' or 'convert' not found in PATH." >&2
+    exit 1
+  fi
+}
+
+# Validate arguments
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  show_help; exit 0
+fi
+if [ "$#" -lt 3 ] || [ "$#" -gt 5 ]; then
+  show_help; exit 1
+fi
+
+# Inputs
+CHART_TYPE="$1"
+CHART_DATA="$2"
+OUTPUT_FILE="$3"
+WIDTH="${4:-600}"
+HEIGHT="${5:-600}"
+
+# Validate chart type
+case "$CHART_TYPE" in
+  pie|bar|line) ;;
+  *) echo "Error: unsupported type '$CHART_TYPE' (expected: pie|bar|line)." >&2; exit 1 ;;
+esac
+
+# Validate that width/height are positive integers
+if ! [[ "$WIDTH" =~ ^[0-9]+$ && "$HEIGHT" =~ ^[0-9]+$ && "$WIDTH" -gt 0 && "$HEIGHT" -gt 0 ]]; then
+  echo "Error: width and height must be positive integers." >&2
+  exit 1
+fi
+
+require_commands gnuplot dd truncate mktemp awk
+CONVERT_CMD="$(detect_convert)"
+
+# Initialize temp file vars before trap so cleanup is safe under set -u
+TMP_PREFIX="" CHART_IMAGE="" RAW_PCL="" GNUPLOT_SCRIPT="" DATA_FILE=""
+
+# Ensure cleanup on exit
+cleanup() {
+  rm -f "${TMP_PREFIX:-}" "${CHART_IMAGE:-}" "${RAW_PCL:-}" "${GNUPLOT_SCRIPT:-}" "${DATA_FILE:-}"
+}
+trap cleanup EXIT
+
+# Temporary files
+TMP_PREFIX="$(mktemp)"
+CHART_IMAGE="${TMP_PREFIX}.png"
+RAW_PCL="${TMP_PREFIX}.pcl"
+GNUPLOT_SCRIPT="${TMP_PREFIX}.gp"
+DATA_FILE="${TMP_PREFIX}.dat"
+
+# Step 1: Normalize input into a TAB-separated "label<TAB>value" data file.
+# Accepts a CSV path or an inline "label:value,..." string.
+if [ -f "$CHART_DATA" ]; then
+  awk -F',' '
+    function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
+    {
+      l = trim($1); v = trim($2)
+      # Skip a header row when the value column is not numeric
+      if (NR == 1 && v !~ /^-?[0-9]+(\.[0-9]+)?$/) next
+      if (l == "") next
+      printf "%s\t%s\n", l, v
+    }
+  ' "$CHART_DATA" > "$DATA_FILE"
+else
+  awk -v data="$CHART_DATA" '
+    function trim(s){ gsub(/^[ \t]+|[ \t]+$/,"",s); return s }
+    BEGIN {
+      n = split(data, pairs, ",")
+      for (i = 1; i <= n; i++) {
+        split(pairs[i], kv, ":")
+        if (trim(kv[1]) == "") continue
+        printf "%s\t%s\n", trim(kv[1]), trim(kv[2])
+      }
+    }
+  ' > "$DATA_FILE"
+fi
+assert_success "Failed to parse input data."
+
+[ -s "$DATA_FILE" ] || {
+  echo "Error: no valid data parsed from input." >&2
+  exit 1
+}
+
+# Step 2: Build the gnuplot script for the requested chart type
+{
+  echo "set terminal pngcairo size ${WIDTH},${HEIGHT} background rgb 'white'"
+  echo "set output '${CHART_IMAGE}'"
+  echo "set datafile separator \"\t\""
+
+  case "$CHART_TYPE" in
+    pie)
+      echo "set size square"
+      echo "unset border; unset tics; unset key"
+      echo "set xrange [-1.5:1.5]; set yrange [-1.5:1.5]"
+      LC_NUMERIC=C awk -F'\t' '
+        BEGIN {
+          style[0]="fc rgb \"black\"  fs solid 1.0"
+          style[1]="fc rgb \"white\"  fs solid 1.0"
+          style[2]="fc rgb \"black\"  fs pattern 4"
+          style[3]="fc rgb \"black\"  fs pattern 5"
+          style[4]="fc rgb \"gray50\" fs solid 1.0"
+          style[5]="fc rgb \"black\"  fs pattern 1"
+          nstyles = 6
+          pi = 3.14159265358979
+        }
+        {
+          v = $2 + 0
+          if (v < 0) {
+            print "Warning: skipping negative value for label \"" $1 "\"" > "/dev/stderr"
+            next
+          }
+          label[NR]=$1; value[NR]=v; total+=v
+        }
+        END {
+          if (total <= 0) { print "set label \"no data\" at 0,0 center"; exit }
+          acc = 0
+          for (i = 1; i <= NR; i++) {
+            if (!(i in value)) continue
+            frac = value[i] / total * 360.0
+            a = 90 - acc - frac
+            b = 90 - acc
+            st = style[(i - 1) % nstyles]
+            printf "set object %d circle at 0,0 size 1 arc [%.4f:%.4f] %s border lc rgb \"black\"\n", i, a, b, st
+            mid = (a + b) / 2.0 * pi / 180.0
+            lx = 1.18 * cos(mid); ly = 1.18 * sin(mid)
+            pct = value[i] / total * 100.0
+            printf "set label %d \"%s %.1f%%\" at %.4f,%.4f center font \",10\"\n", i, label[i], pct, lx, ly
+            acc += frac
+          }
+        }
+      ' "$DATA_FILE"
+      echo "plot -10 notitle"
+      ;;
+
+    bar)
+      echo "set style data histograms"
+      echo "set style fill solid 1.0 border -1"
+      echo "set boxwidth 0.8 relative"
+      echo "set yrange [0:*]"
+      echo "set grid ytics lc rgb 'gray70'"
+      echo "set xtics rotate by -40 right"
+      echo "unset key"
+      echo "set lmargin 8; set bmargin 5"
+      echo "plot '${DATA_FILE}' using 2:xtic(1) lc rgb 'black' notitle"
+      ;;
+
+    line)
+      echo "set grid lc rgb 'gray70'"
+      echo "set xtics rotate by -40 right"
+      echo "unset key"
+      echo "set lmargin 8; set bmargin 5"
+      echo "set offsets graph 0.02, 0.02, 0.05, 0.05"
+      echo "plot '${DATA_FILE}' using 2:xtic(1) with linespoints lc rgb 'black' lw 2 pt 7 ps 1.2 notitle"
+      ;;
+  esac
+} > "$GNUPLOT_SCRIPT"
+assert_success "Failed to build gnuplot script."
+
+# Step 3: Render the chart as PNG
+gnuplot "$GNUPLOT_SCRIPT"
+assert_success "Failed to generate chart image."
+
+[ -s "$CHART_IMAGE" ] || {
+  echo "Error: Generated chart image is empty or missing." >&2
+  exit 1
+}
+
+# Step 4: Convert PNG to PCL (monochrome)
+"$CONVERT_CMD" -monochrome "$CHART_IMAGE" "$RAW_PCL"
+assert_success "Failed to convert image to PCL."
+
+[ -s "$RAW_PCL" ] || {
+  echo "Error: Generated PCL file is empty or missing." >&2
+  exit 1
+}
+
+# Step 5: Adjust PCL file - remove first 7 bytes, then last byte
+dd if="$RAW_PCL" of="$OUTPUT_FILE" bs=1 skip=7 status=none
+assert_success "Failed to trim first 7 bytes from PCL file."
+
+truncate -s -1 "$OUTPUT_FILE"
+assert_success "Failed to remove last byte from PCL file."
+
+[ -s "$OUTPUT_FILE" ] || {
+  echo "Error: Final PCL file is empty or invalid." >&2
+  exit 1
+}

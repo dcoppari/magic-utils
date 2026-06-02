@@ -13,7 +13,7 @@ DEBIAN_DIR=$(BUILD_DIR)/DEBIAN
 DEB_FILE=$(PACKAGE_NAME)_$(VERSION)_$(ARCH).deb
 
 FONTS=fonts/*.ttf
-SCRIPTS=magicpcl magicqr magicspool
+SCRIPTS=magicpcl magicqr magicspool magicgraph
 BINARIES=pcl6
 
 all: clean build
@@ -34,10 +34,11 @@ control:
 	@printf "Priority: optional\n" >> $(DEBIAN_DIR)/control
 	@printf "Architecture: %s\n" "$(ARCH)" >> $(DEBIAN_DIR)/control
 	@printf "Maintainer: Diego J. Coppari <diego2k[_at_]gmail.com>\n" >> $(DEBIAN_DIR)/control
-	@printf "Depends: bash, perl, dos2unix, rlpr, lpr, pdftk, qrencode, imagemagick\n" >> $(DEBIAN_DIR)/control
-	@printf "Description: MagicSpool Utilities (magicpcl, magicqr, magicspool)\n" >> $(DEBIAN_DIR)/control
+	@printf "Depends: bash, perl, dos2unix, rlpr, lpr, pdftk, qrencode, imagemagick, gnuplot\n" >> $(DEBIAN_DIR)/control
+	@printf "Description: MagicSpool Utilities (magicpcl, magicqr, magicspool, magicgraph)\n" >> $(DEBIAN_DIR)/control
 	@printf " Suite of tools to process PCL input streams, generate QR codes as PCL,\n" >> $(DEBIAN_DIR)/control
-	@printf " apply background to PDFs and handle remote spool via magicspooler.\n" >> $(DEBIAN_DIR)/control
+	@printf " generate monochrome charts (pie/bar/line) as PCL, apply background to PDFs,\n" >> $(DEBIAN_DIR)/control
+	@printf " and handle remote spool via magicspooler.\n" >> $(DEBIAN_DIR)/control
 	@printf " Includes bundled pcl6 binary and required TTF fonts in /windows/fonts.\n" >> $(DEBIAN_DIR)/control
 
 copy-scripts:
