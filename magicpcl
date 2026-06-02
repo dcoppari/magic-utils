@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # MagicPCL converts PCL to PDF, applies background overlays, sends to printer or spools.
-# (c) 2008 Diego Javier Coppari – LGLP License
+# (c) 2008-2026 Diego Javier Coppari – LGPL License
 #
 
 show_help() {
