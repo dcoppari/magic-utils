@@ -1,0 +1,50 @@
+{
+    "settings": {
+        "nombre": "COOP.DE SERV.PUB. DE JARDIN AMERICA LTDA",
+        "direccion": "BRASIL 675",
+        "localidad": "JARDIN AMERICA",
+        "cuit": "30-57172336-7",
+        "iibb": "30-57172336-7",
+        "fecha": "17/04/1971",
+        "categoria_iva": "Responsable Inscripto"
+    },
+    "header": {
+        "puesto": 6,
+        "nro_movimiento": 1,
+        "concepto_afip": 1,
+        "descripcion_concepto": "factura",
+        "numero_cae": "123456789",
+        "fecha_cae": "2021-01-02",
+        "letra_movimiento": "A",
+        "tiposervicio_afip": 1,
+        "iva_cliente": 1,
+        "cuit_cliente": "30-70830107-4",
+        "nombre_cliente": "Coop.de Agua Potable Gral. Belgrano",
+        "direccion_cliente": "Los Inmigrantes",
+        "localidad_cliente": "Gobernador Roca",
+        "provincia_cliente": "GOBERNADOR ROCA",
+        "tipodni": "",
+        "contacto_movimiento": "",
+        "email_movimiento": "",
+        "fecha_movimiento": "2022-05-03",
+        "vencimiento_movimiento": "2022-05-03",
+        "importe_movimiento": "4800",
+        "importe_nogravado": "0",
+        "importe_ibr": "0",
+        "neto_movimiento": "3861.31",
+        "alicuota_iva": "0",
+        "importe_iva": "810.88",
+        "importe_exento": "0"
+    },
+    "detail": [
+        {
+            "codigo_detalle": "46",
+            "descripcion_detalle": "SULFATO A BASE DE HIDRATO",
+            "cantidad_detalle": "2",
+            "alicuota_iva": "21",
+            "neto_detalle": "3861.31",
+            "iva_detalle": "810.88",
+            "exento_detalle": "0.00"
+        }
+    ]
+}
