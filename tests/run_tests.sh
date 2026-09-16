@@ -19,6 +19,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 magicqr="$ROOT_DIR/magicqr"
 magicgraph="$ROOT_DIR/magicgraph"
 magicpcl="$ROOT_DIR/magicpcl"
+magicescpos="$ROOT_DIR/magicescpos"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -108,6 +109,47 @@ echo "magicpcl"
 assert_exit  "help flag exits 0"              0  "$magicpcl" --help
 assert_exit  "no args exits 0 (shows help)"   0  "$magicpcl"
 assert_exit  "bad option exits 1"             1  "$magicpcl" -Z /tmp/out.pdf
+
+# ── magicescpos ──────────────────────────────────────────────────────────────
+
+echo "magicescpos"
+
+assert_exit  "help flag exits 0"              0  "$magicescpos" --help
+assert_exit  "version flag exits 0"           0  "$magicescpos" -version
+assert_exit  "nonexistent file exits 1"       1  "$magicescpos" "$TMP_DIR/nonexistent.json"
+
+echo "invalid json" > "$TMP_DIR/bad.json"
+assert_exit  "invalid json exits 1"           1  "$magicescpos" "$TMP_DIR/bad.json"
+
+assert_exit  "empty stdin exits 1"           1  bash -c "'$magicescpos' < /dev/null"
+
+OUT="$TMP_DIR/receipt.bin"
+assert_exit  "sample.json as file exits 0"    0  "$magicescpos" "$FIXTURES/sample.json"
+"$magicescpos" "$FIXTURES/sample.json" > "$OUT"
+assert_nonempty "sample.json produces binary output" "$OUT"
+if grep -q "FACTURA A" "$OUT"; then
+  pass "sample.json contains expected receipt text"
+else
+  fail "sample.json output missing expected receipt text"
+fi
+
+OUT_STDIN="$TMP_DIR/receipt_stdin.bin"
+assert_exit  "sample.json via STDIN exits 0"  0  bash -c "'$magicescpos' < '$FIXTURES/sample.json' > '$OUT_STDIN'"
+assert_nonempty "sample.json via STDIN produces binary output" "$OUT_STDIN"
+
+OUT_COLS="$TMP_DIR/receipt_cols.bin"
+assert_exit  "custom cols exits 0"            0  "$magicescpos" -cols 32 "$FIXTURES/sample.json"
+"$magicescpos" -cols 32 "$FIXTURES/sample.json" > "$OUT_COLS"
+assert_nonempty "custom cols produces binary output" "$OUT_COLS"
+
+TPL="$TMP_DIR/test_tpl.j2"
+printf '[init][center]{{ settings.nombre }}[feed][cut]' > "$TPL"
+OUT_TPL="$TMP_DIR/receipt_tpl.bin"
+assert_exit  "custom template exits 0"        0  "$magicescpos" "$FIXTURES/sample.json" -t "$TPL"
+"$magicescpos" "$FIXTURES/sample.json" -t "$TPL" > "$OUT_TPL"
+assert_nonempty "custom template produces binary output" "$OUT_TPL"
+
+assert_exit  "bad template path exits 1"      1  "$magicescpos" "$FIXTURES/sample.json" -t "$TMP_DIR/nonexistent.j2"
 
 # ── summary ──────────────────────────────────────────────────────────────────
 

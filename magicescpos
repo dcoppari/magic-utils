@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""
+magicescpos - Generador de tickets ESC/POS para impresoras térmicas
+Utiliza Jinja2 para la plantilla de impresión de comprobantes.
+Requisito del sistema: sudo apt install python3-jinja2
+"""
+
+import sys
+
+try:
+    import jinja2
+except (ImportError, ModuleNotFoundError):
+    sys.stderr.write("ERROR: python3-jinja2 no esta instalado. Instalar con: sudo apt install python3-jinja2\n")
+    sys.exit(1)
+
+import os
+import json
+import re
+import base64
+import argparse
+from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+
+# Plantilla Jinja2 por defecto con tags de formato ESC/POS:
+# [init]        : Inicializa la impresora (ESC @)
+# [mode-a]      : Modo fuente A normal (ESC ! 0)
+# [center]      : Alineación centrada (ESC a 1)
+# [left]        : Alineación a la izquierda (ESC a 0)
+# [right]       : Alineación a la derecha (ESC a 2)
+# [bold][/bold] : Negrita activada / desactivada (ESC E 1 / ESC E 0)
+# [line]        : Línea divisoria de guiones (----------------)
+# [double-line] : Línea divisoria doble (================)
+# [feed]        : Avance de 1 línea
+# [feed:N]      : Avance de N líneas (ej: [feed:2])
+# [cut]         : Corte total de papel (GS V A 3)
+# [drawer]      : Apertura de gaveta de dinero (ESC p 0)
+# [qr:TEXTO]    : Código QR nativo ESC/POS
+# [logo]        : Impresión del logo si está configurado en settings.logo
+DEFAULT_TEMPLATE = """[init][mode-a][center]{% if settings.nombre %}{{ settings.nombre }}
+{% endif %}{% if settings.direccion %}{{ settings.direccion }}
+{% endif %}{% if settings.localidad %}{{ settings.localidad }}
+{% endif %}{% if settings.cuit %}CUIT: {{ settings.cuit }}
+{% endif %}{% if settings.iibb %}IIBB: {{ settings.iibb }}
+{% endif %}{% if settings.fecha %}FECHA INICIO ACTIVIDAD: {{ settings.fecha }}
+{% endif %}{% if settings.categoria_iva %}{{ settings.categoria_iva }}
+{% endif %}[line][right]NUM. {{ header.puesto | pad_left(4, "0") }}-{{ header.nro_movimiento | pad_left(8, "0") }}
+FECHA {{ header.fecha_movimiento | format_date }}
+[mode-a][left][line][center][bold]{{ header.descripcion_concepto | upper }} {{ header.letra_movimiento }}
+[/bold]ORIGINAL (Cod. {{ header.concepto_afip | pad_left(3, "0") }})
+[left][line][left]{{ header.nombre_cliente }}
+{{ header.tipodni }} {{ header.cuit_cliente }}
+{{ header.direccion_cliente }}
+{{ header.localidad_cliente }}
+{{ header.provincia_cliente }}
+{% if header.contacto_movimiento %}Telefono: {{ header.contacto_movimiento }}
+{% endif %}{% if header.email_movimiento %}E-Mail: {{ header.email_movimiento }}
+{% endif %}[line][left]Cant./Precio Unit.
+Descripcion (%IVA)[%BI][right]IMPORTE
+[line][left][/bold]{% for item in detail %}[left]{{ item.cantidad }} x {{ item.precio_item }} ({{ item.alicuota }})
+{{ item.descripcion | truncate_str(cols) }}
+{{ item.codigo | pad_right(20) }}{{ item.total | pad_left(cols - 20) }}
+{% endfor %}[feed][left]{% if header.iva_cliente != 5 %}[line]NETO  {{ totals.neto | pad_left(cols - 6) }}
+IVA   {{ totals.iva | pad_left(cols - 6) }}
+EXENTO{{ totals.exento | pad_left(cols - 6) }}
+IIBB  {{ totals.ibr | pad_left(cols - 6) }}
+{% endif %}[bold][double-line]TOTAL {{ totals.total | pad_left(cols - 6) }}
+[double-line][/bold][feed:2][center]*** REFERENCIA ELECTRONICA DEL COMPROBANTE ***
+CAE Nro: {{ header.numero_cae }}
+Vto: {{ header.fecha_cae | format_date }}
+[feed:2]{% if qr_code %}[center][qr:{{ qr_code }}]
+[left][feed:2]{% endif %}[cut][drawer]"""
+
+def number_format(val, decimals=2):
+    try:
+        d = Decimal(str(val))
+    except Exception:
+        d = Decimal("0")
+    fmt = Decimal("10") ** -decimals
+    rounded = d.quantize(fmt, rounding=ROUND_HALF_UP)
+    parts = f"{rounded:.{decimals}f}".split(".")
+    int_part = parts[0]
+    is_neg = int_part.startswith("-")
+    if is_neg:
+        int_part = int_part[1:]
+    chunks = []
+    while len(int_part) > 3:
+        chunks.insert(0, int_part[-3:])
+        int_part = int_part[:-3]
+    chunks.insert(0, int_part)
+    formatted_int = ",".join(chunks)
+    res = f"-{formatted_int}" if is_neg else formatted_int
+    if len(parts) > 1:
+        res += "." + parts[1]
+    return res
+
+def format_date(d_str):
+    if not d_str:
+        return ""
+    d_str = str(d_str).strip()
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(d_str, fmt).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+    return d_str
+
+def pad_left(val, width, char=" "):
+    s = str(val) if val is not None else ""
+    return s.rjust(width, char)
+
+def pad_right(val, width, char=" "):
+    s = str(val) if val is not None else ""
+    return s.ljust(width, char)
+
+def truncate_str(val, width):
+    s = str(val) if val is not None else ""
+    return s[:width]
+
+def clean_digits(val):
+    if val is None:
+        return 0
+    s = "".join(ch for ch in str(val) if ch.isdigit())
+    return int(s) if s else 0
+
+def encode_cp437(text):
+    """Codifica texto en página de caracteres CP437 estándar de impresoras térmicas"""
+    char_map = {
+        "á": b"\xa0", "é": b"\x82", "í": b"\xa1", "ó": b"\xa2", "ú": b"\xa3",
+        "Á": b"A", "É": b"\x90", "Í": b"I", "Ó": b"O", "Ú": b"U",
+        "ñ": b"\xa4", "Ñ": b"\xa5", "ü": b"\x81", "Ü": b"\x9a",
+        "°": b"\xf8", "¿": b"\xa8", "¡": b"\xad"
+    }
+    out = bytearray()
+    for ch in text:
+        if ord(ch) < 128:
+            out.append(ord(ch))
+        elif ch in char_map:
+            out.extend(char_map[ch])
+        else:
+            try:
+                out.extend(ch.encode("cp437"))
+            except UnicodeEncodeError:
+                out.append(ord("?"))
+    return bytes(out)
+
+def write_qr_code(content, ec_level=0, size=10):
+    if not content:
+        return b""
+    out = bytearray()
+    # Modelo 2: GS ( k \x04 \x00 1 A \x32 \x00
+    out.extend(b"\x1d(k\x04\x001A2\x00")
+    # Tamaño: GS ( k \x03 \x00 1 C <size>
+    out.extend(b"\x1d(k\x03\x001C" + bytes([size]))
+    # Nivel de corrección: GS ( k \x03 \x00 1 E <'0'+ec>
+    out.extend(b"\x1d(k\x03\x001E" + bytes([ord('0') + ec_level]))
+    # Almacenar datos: GS ( k <pL> <pH> 1 P 0 <content>
+    content_bytes = content.encode("ascii", errors="replace")
+    data_len = len(content_bytes) + 3
+    pL = data_len & 0xff
+    pH = (data_len >> 8) & 0xff
+    out.extend(b"\x1d(k" + bytes([pL, pH]) + b"1P0" + content_bytes)
+    # Imprimir: GS ( k \x03 \x00 1 Q 0
+    out.extend(b"\x1d(k\x03\x001Q0")
+    return bytes(out)
+
+def compile_escpos(rendered_text, cols=40):
+    """Interpreta los tags [center], [bold], [line], etc. y genera los bytes ESC/POS"""
+    TAG_RE = re.compile(r"(\[(?:init|mode-a|center|left|right|bold|/bold|line|double-line|cut|drawer|feed(?::\d+)?|qr:[^\]]+)\])")
+    tokens = TAG_RE.split(rendered_text)
+    out = bytearray()
+    for tok in tokens:
+        if not tok:
+            continue
+        if tok == "[init]":
+            out.extend(b"\x1b@")
+        elif tok == "[mode-a]":
+            out.extend(b"\x1b!\x00")
+        elif tok == "[center]":
+            out.extend(b"\x1ba\x01")
+        elif tok == "[left]":
+            out.extend(b"\x1ba\x00")
+        elif tok == "[right]":
+            out.extend(b"\x1ba\x02")
+        elif tok == "[bold]":
+            out.extend(b"\x1bE\x01")
+        elif tok == "[/bold]":
+            out.extend(b"\x1bE\x00")
+        elif tok == "[line]":
+            out.extend(encode_cp437("-" * cols + "\n"))
+        elif tok == "[double-line]":
+            out.extend(encode_cp437("=" * cols + "\n"))
+        elif tok == "[feed]":
+            out.append(0x0a)
+        elif tok.startswith("[feed:"):
+            n = int(tok[6:-1])
+            out.extend(b"\x1bd" + bytes([n]))
+        elif tok == "[cut]":
+            out.extend(b"\x1dVA\x03")
+        elif tok == "[drawer]":
+            out.extend(b"\x1bp0\x3c\x78")
+        elif tok.startswith("[qr:"):
+            qr_data = tok[4:-1]
+            out.extend(write_qr_code(qr_data))
+        else:
+            out.extend(encode_cp437(tok))
+    return bytes(out)
+
+def generate_receipt(receipt_data, cols=40, template_str=None):
+    settings = receipt_data.get("settings", {})
+    header = receipt_data.get("header", {})
+    raw_detail = receipt_data.get("detail", [])
+    letra = str(header.get("letra_movimiento", ""))
+
+    # Pre-calcular items con precios e importes formateados
+    detail = []
+    subtotal = 0.0
+    for det in raw_detail:
+        try:
+            cant = float(det.get("cantidad_detalle", 1))
+        except (ValueError, TypeError):
+            cant = 1.0
+        if cant == 0:
+            cant = 1.0
+
+        neto = float(det.get("neto_detalle", 0))
+        exento = float(det.get("exento_detalle", 0))
+        iva = float(det.get("iva_detalle", 0))
+
+        if letra == "A":
+            tot = neto + exento
+        else:
+            if "total_detalle" in det and det["total_detalle"] != "":
+                tot = float(det["total_detalle"])
+            else:
+                tot = neto + iva + exento
+
+        item_dict = dict(det)
+        item_dict["cantidad"] = det.get("cantidad_detalle", "")
+        item_dict["precio_item"] = number_format(tot / cant, 2)
+        item_dict["total"] = number_format(tot, 2)
+        item_dict["alicuota"] = det.get("alicuota_iva", "")
+        item_dict["descripcion"] = det.get("descripcion_detalle", "")
+        item_dict["codigo"] = det.get("codigo_detalle", "")
+        detail.append(item_dict)
+        subtotal += tot
+
+    # Totales formateados
+    totals = {
+        "neto": number_format(header.get("neto_movimiento", 0), 2),
+        "iva": number_format(header.get("importe_iva", 0), 2),
+        "exento": number_format(header.get("importe_exento", 0), 2),
+        "ibr": number_format(header.get("importe_ibr", 0), 2),
+        "total": number_format(header.get("importe_movimiento", 0), 2),
+        "subtotal": number_format(subtotal, 2)
+    }
+
+    # Código QR AFIP (si está configurado)
+    qr_code = ""
+    afip960 = settings.get("afip960", "")
+    if afip960:
+        try:
+            tipo_dni_val = int(header.get("tipodni", 0))
+        except (ValueError, TypeError):
+            tipo_dni_val = 0
+
+        datos_qr = {
+            "ver": 1,
+            "fecha": str(header.get("fecha_movimiento", "")),
+            "cuit": clean_digits(settings.get("cuit", "")),
+            "ptoVta": int(header.get("puesto", 0)),
+            "tipoCmp": int(header.get("concepto_afip", 0)),
+            "nroCmp": int(header.get("nro_movimiento", 0)),
+            "importe": float(header.get("importe_movimiento", 0)) * 100,
+            "moneda": "PES",
+            "ctz": 1,
+            "tipoDocRec": tipo_dni_val,
+            "nroDocRec": clean_digits(header.get("cuit_cliente", "")),
+            "tipoCodAut": "E",
+            "codAut": clean_digits(header.get("numero_cae", ""))
+        }
+        json_qr = json.dumps(datos_qr, separators=(',', ':'))
+        qr_b64 = base64.b64encode(json_qr.encode("utf-8")).decode("ascii")
+        qr_code = afip960 + qr_b64
+
+    # Configuración de Jinja2
+    env = jinja2.Environment(trim_blocks=False, lstrip_blocks=False)
+    env.filters["pad_left"] = pad_left
+    env.filters["pad_right"] = pad_right
+    env.filters["truncate_str"] = truncate_str
+    env.filters["format_date"] = format_date
+    env.filters["money"] = number_format
+
+    tpl_source = template_str if template_str else DEFAULT_TEMPLATE
+    template = env.from_string(tpl_source)
+
+    context = {
+        "settings": settings,
+        "header": header,
+        "detail": detail,
+        "totals": totals,
+        "cols": cols,
+        "qr_code": qr_code
+    }
+
+    rendered_text = template.render(**context)
+    return compile_escpos(rendered_text, cols)
+
+def main():
+    epilog = """Ejemplos de uso:
+  cat comprobante.json | magicescpos | lp -s -dtickeadora
+  magicescpos comprobante.json | lp -s -dtickeadora
+  magicescpos comprobante.json -t mi_plantilla.j2 > ticket.bin
+"""
+    parser = argparse.ArgumentParser(
+        description="magicescpos - Generador de tickets ESC/POS para impresoras térmicas",
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("file", nargs="?", help="Archivo JSON del comprobante (opcional si se usa tubería STDIN)")
+    parser.add_argument("-cols", type=int, default=40, help="Ancho de columnas del ticket (por defecto: 40)")
+    parser.add_argument("-t", "-template", dest="template_file", help="Ruta a una plantilla Jinja2 personalizada (.j2)")
+    parser.add_argument("-version", action="store_true", help="Muestra la versión y sale")
+
+    args = parser.parse_args()
+
+    if args.version:
+        print("magicescpos v2.1.0 (ESC/POS receipt generator with Jinja2 templates)")
+        sys.exit(0)
+
+    template_str = None
+    if args.template_file:
+        try:
+            with open(args.template_file, "r", encoding="utf-8") as f:
+                template_str = f.read()
+        except Exception as e:
+            sys.stderr.write(f"Error leyendo plantilla {args.template_file}: {e}\n")
+            sys.exit(1)
+
+    # Lectura de datos JSON desde archivo o STDIN
+    if args.file:
+        try:
+            with open(args.file, "r", encoding="utf-8") as f:
+                raw_data = f.read()
+        except Exception as e:
+            sys.stderr.write(f"Error leyendo archivo {args.file}: {e}\n")
+            sys.exit(1)
+    elif sys.stdin.isatty():
+        # Ejecutado en terminal interactiva sin argumentos ni pipe
+        parser.print_help(sys.stderr)
+        sys.exit(0)
+    else:
+        raw_data = sys.stdin.read()
+
+    if not raw_data.strip():
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+
+    try:
+        receipt_data = json.loads(raw_data)
+        payload = generate_receipt(receipt_data, cols=args.cols, template_str=template_str)
+        sys.stdout.buffer.write(payload)
+        sys.stdout.buffer.flush()
+    except Exception as e:
+        sys.stderr.write(f"Error procesando comprobante: {e}\n")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
