@@ -55,7 +55,6 @@ export CLASSPATH=""
 # Create temporary directory for the user
 USER_TMP_DIR="/tmp/$USER"
 mkdir -p "$USER_TMP_DIR"
-echo "$@" > "$USER_TMP_DIR/lm.log"
 
 OPTION="${1:--S}"
 OUTPUT="${2:-$USER_TMP_DIR/output.pdf}"
