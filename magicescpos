@@ -116,6 +116,15 @@ def truncate_str(val, width):
     s = str(val) if val is not None else ""
     return s[:width]
 
+def decode_input(raw_bytes):
+    # Fallback a CP437: codepage nativa de la impresora (ver encode_cp437) y la
+    # que suelen usar sistemas legacy (ej. OpenEdge/ABL) que no convierten su
+    # salida a UTF-8. CP437 nunca falla al decodificar (mapea los 256 bytes).
+    try:
+        return raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw_bytes.decode("cp437")
+
 def clean_digits(val):
     if val is None:
         return 0
@@ -339,8 +348,8 @@ def main():
     # Lectura de datos JSON desde archivo o STDIN
     if args.file:
         try:
-            with open(args.file, "r", encoding="utf-8") as f:
-                raw_data = f.read()
+            with open(args.file, "rb") as f:
+                raw_data = decode_input(f.read())
         except Exception as e:
             sys.stderr.write(f"Error leyendo archivo {args.file}: {e}\n")
             sys.exit(1)
@@ -349,7 +358,7 @@ def main():
         parser.print_help(sys.stderr)
         sys.exit(0)
     else:
-        raw_data = sys.stdin.read()
+        raw_data = decode_input(sys.stdin.buffer.read())
 
     if not raw_data.strip():
         parser.print_help(sys.stderr)
