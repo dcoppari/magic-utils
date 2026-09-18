@@ -7,6 +7,14 @@ on:
 
 jobs:
   build-deb:
+    # base_ref solo viene seteado en el push event cuando el tag se pushea
+    # JUNTO con una actualizacion de rama en el mismo `git push` (ej. `git
+    # push origin master v1.2.3`), o al crear el release/tag apuntando a
+    # master desde la UI de GitHub. Si se pushea el tag solo (`git tag
+    # v1.2.3 && git push origin v1.2.3`) con master ya al dia en el remoto,
+    # base_ref queda vacio, esta condicion da false y el job se saltea SIN
+    # error visible (aparece como "skipped" en Actions). Verificar siempre
+    # con `gh run list --workflow=build.yml` despues de taguear.
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && github.event.base_ref == 'refs/heads/master'
     runs-on: ubuntu-latest
 

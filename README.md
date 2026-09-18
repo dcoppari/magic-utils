@@ -39,6 +39,25 @@ The following files will be installed:
 
 ---
 
+## 🏷️ Releasing (maintainers)
+
+Pushing a `v*` tag triggers `.github/workflows/build.yml`, which runs the test suite, builds the `.deb`, and publishes it as a GitHub Release. The job only runs if `base_ref` on the push event resolves to `refs/heads/master` — that field is **not** reliably set when a tag is pushed by itself (`git tag vX.Y.Z && git push origin vX.Y.Z`) once `master` is already up to date on the remote; the job then silently shows as **skipped** in Actions, with no error and no release.
+
+To cut a release reliably:
+
+```bash
+git tag vX.Y.Z
+git push origin master vX.Y.Z   # push the tag together with master in the same push
+```
+
+or create the release/tag from the GitHub UI targeting `master`. Either way, confirm it actually ran:
+
+```bash
+gh run list --workflow=build.yml --limit 1
+```
+
+---
+
 ## ⚙️ Dependencies
 
 The package includes the `pcl6` binary, but requires the following system tools to be available:
