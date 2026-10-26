@@ -84,6 +84,14 @@ OUT="$TMP_DIR/bar.pcl"
 assert_exit  "bar inline exits 0"             0  "$magicgraph" bar "Ene:120,Feb:95,Mar:140" "$OUT" 1000 600
 assert_nonempty "bar inline produces PCL"        "$OUT"
 
+# La imagen debe ir sin comprimir (*b0M): magicpcl pasa todo por unix2dos -f y un
+# byte 0x0A dentro de datos comprimidos (*b3M, delta) no se puede reparar
+if grep -aq $'\x1b\\*b0M' "$OUT" && ! grep -aq $'\x1b\\*b3M' "$OUT"; then
+  pass "bar PCL is uncompressed (*b0M)"
+else
+  fail "bar PCL is uncompressed (*b0M)"
+fi
+
 OUT="$TMP_DIR/line.pcl"
 assert_exit  "line inline exits 0"            0  "$magicgraph" line "Lun:10,Mar:15,Mie:8" "$OUT"
 assert_nonempty "line inline produces PCL"       "$OUT"

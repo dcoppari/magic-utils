@@ -109,6 +109,13 @@ magicgraph bar ventas.csv barras.pcl 1000 600
 magicgraph line consumo.csv linea.pcl
 ```
 
+> **Raster images and `magicpcl`:** `magicpcl` pipes the whole stream through `unix2dos -f`,
+> which turns every `0x0A` byte into `0D 0A` and corrupts binary data. That is why
+> `magicgraph` writes the image **uncompressed** (`*b0M`, `-compress none`): with compression
+> (`*b3M`, delta rows) a `0x0A` inside the data cannot be repaired. The program that prints
+> the PCL must still replace the few `0x0A` bytes of the raster data (for example by `0x0B`,
+> a one-pixel change) before sending it through `magicpcl`.
+
 ### Send a file to a remote spooler
 
 ```bash
