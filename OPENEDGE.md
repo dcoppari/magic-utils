@@ -336,6 +336,13 @@ Los scripts `magicqr` y `magicgraph` generan archivos `.pcl` listos para enviar 
 siguiente procedimiento genérico los invoca, lee el binario resultante en memoria y lo envía al
 contexto de impresión activo (`OUTPUT TO PRINTER`).
 
+> **Imágenes raster y `magicpcl`:** `magicpcl` pasa todo el flujo por `unix2dos -f`, que convierte
+> cada byte `0x0A` en `0D 0A` y corrompe los datos binarios. Por eso `magicgraph` entrega la
+> imagen **sin comprimir** (`*b0M`, `-compress none`): con compresión (`*b3M`, filas delta) un
+> `0x0A` dentro de los datos no se puede reparar. Si el flujo va a pasar por `magicpcl`, el
+> programa que imprime tiene que reemplazar esos pocos bytes `0x0A` de la imagen (por ejemplo
+> por `0x0B`, un cambio de un solo píxel) antes de emitirla.
+
 ### Procedimiento auxiliar `magic-utils`
 
 ```openedge

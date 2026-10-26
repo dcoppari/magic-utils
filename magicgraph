@@ -203,20 +203,27 @@ assert_success "Failed to parse input data."
       ;;
 
     bar)
-      echo "set style data histograms"
-      echo "set style fill solid 1.0 border -1"
-      echo "set boxwidth 0.8 relative"
+      # Barras grises con valor encima; la ultima en negro; promedio punteado
+      echo "set style fill pattern 4 border -1"
+      echo "set boxwidth 0.7 absolute"
       echo "set yrange [0:*]"
-      echo "set grid ytics lc rgb 'gray70'"
-      echo "set xtics rotate by -40 right"
+      echo "set offsets 0, 0, graph 0.12, 0"
+      echo "set border 3 lw 1.2"
+      echo "set grid ytics lt 0 lc rgb 'gray50'"
+      echo "set xtics nomirror rotate by 40 right"
+      echo "set ytics nomirror"
       echo "unset key"
-      echo "set lmargin 8; set bmargin 5"
-      echo "plot '${DATA_FILE}' using 2:xtic(1) lc rgb 'black' notitle"
+      echo "set lmargin 7; set bmargin 4; set rmargin 2; set tmargin 2"
+      echo "stats '${DATA_FILE}' using 2 nooutput"
+      echo "set arrow 1 from graph 0, first STATS_mean to graph 1, first STATS_mean nohead dt 2 lw 1.5 lc rgb 'black' back"
+      echo "plot '${DATA_FILE}' using 0:2:xtic(1) with boxes fs pattern 4 lc rgb 'black' notitle, \\"
+      echo "     '${DATA_FILE}' using 0:2:2 with labels offset 0,0.7 font ',9' notitle, \\"
+      echo "     '${DATA_FILE}' using 0:(\$0==STATS_records-1 ? \$2 : 1/0) with boxes fs solid 1.0 lc rgb 'black' notitle"
       ;;
 
     line)
       echo "set grid lc rgb 'gray70'"
-      echo "set xtics rotate by -40 right"
+      echo "set xtics rotate by 40 right"
       echo "unset key"
       echo "set lmargin 8; set bmargin 5"
       echo "set offsets graph 0.02, 0.02, 0.05, 0.05"
@@ -236,7 +243,7 @@ assert_success "Failed to generate chart image."
 }
 
 # Step 4: Convert PNG to PCL (monochrome)
-"$CONVERT_CMD" -monochrome "$CHART_IMAGE" "$RAW_PCL"
+"$CONVERT_CMD" -monochrome -compress none "$CHART_IMAGE" "$RAW_PCL"
 assert_success "Failed to convert image to PCL."
 
 [ -s "$RAW_PCL" ] || {
